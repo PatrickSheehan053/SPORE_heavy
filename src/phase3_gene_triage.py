@@ -5,6 +5,7 @@ Phase 3: Gene-Level Triage
   - Ambient RNA / strict noise filtering
   - Scale-adaptive expression filter
   - Perturbation target rescue override
+  - Cell Cycle Ghost rescue
 
 Memory-safe: Uses .getnnz() to bypass boolean matrix allocation, and
 a pure-numpy C-buffer column reconstructor to bypass SciPy subsetting bloat.
@@ -102,6 +103,13 @@ def _get_perturbation_targets(adata, cfg: dict) -> set:
     return targets
 
 
+def _get_cell_cycle_genes():
+    """Tirosh et al. 2016 S-phase and G2M-phase gene lists."""
+    s_genes = ["MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8"]
+    g2m_genes = ["HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA"]
+    return s_genes, g2m_genes
+
+
 def filter_genes(adata, cfg: dict, logger):
     log_phase_header(logger, 3, "Gene-Level Triage")
     p3 = cfg["phase3_gene_triage"]
@@ -168,6 +176,22 @@ def filter_genes(adata, cfg: dict, logger):
             logger.info(f"  ⚡ Target rescue: {len(rescued)} perturbation targets saved")
         else:
             logger.info(f"  Target rescue: no perturbation targets at risk")
+
+    # ── 4. Cell Cycle Ghost Rescue ─────────────────────────────────────────
+    cc_s, cc_g2m = _get_cell_cycle_genes()
+    cc_genes = set(cc_s + cc_g2m)
+    var_upper_map = {v.upper(): i for i, v in enumerate(adata.var_names)}
+    
+    ghosts_rescued = []
+    for g in cc_genes:
+        if g in var_upper_map:
+            idx = var_upper_map[g]
+            if would_remove[idx]:
+                would_remove[idx] = False
+                ghosts_rescued.append(adata.var_names[idx])
+                
+    if ghosts_rescued:
+        logger.info(f"  👻 Ghost rescue: {len(ghosts_rescued)} cell cycle genes shielded from sparsity cut")
 
     final_keep = ~would_remove
     waterfall["After adaptive (post-rescue)"] = int(final_keep.sum())
