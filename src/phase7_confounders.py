@@ -118,21 +118,15 @@ def correct_batch_harmony(adata, batch_key: str, logger):
 
     logger.info(f"  Running Harmony batch correction (key='{batch_key}') ...")
 
-    # FIX: Scanpy's sc.pp.scale allocates temporary float64 arrays which causes OOM at high baselines.
-    # We manually compute variance using sklearn's optimized C-backend and mutate the 1D C-buffer in-place.
     logger.info("  Scaling data (ultra-low-RAM manual scale)...")
     if sp.issparse(adata.X) and adata.X.format == "csr":
         scaler = StandardScaler(with_mean=False)
         scaler.fit(adata.X)
 
-        # Prevent division by zero
         scale_factors = scaler.scale_
         scale_factors[scale_factors == 0] = 1.0
 
-        # Mutate the raw data buffer directly in RAM (O(1) memory footprint)
         adata.X.data /= scale_factors[adata.X.indices]
-
-        # Clip values to max_value=10 in-place
         adata.X.data[adata.X.data > 10.0] = 10.0
     else:
         sc.pp.scale(adata, max_value=10, zero_center=False)
@@ -142,6 +136,12 @@ def correct_batch_harmony(adata, batch_key: str, logger):
 
     try:
         import harmonypy
+        # FIX: harmonypy will crash with a KeyError if the batch column is numeric.
+        # We explicitly cast the batch key to a categorical string to satisfy its internal pandas logic.
+        if adata.obs[batch_key].dtype.name not in ['category', 'object', 'string']:
+            logger.info(f"  Casting '{batch_key}' to categorical to satisfy harmonypy constraints...")
+            adata.obs[batch_key] = adata.obs[batch_key].astype(str).astype('category')
+            
         sc.external.pp.harmony_integrate(adata, key=batch_key)
         logger.info(f"  Harmony integration complete → X_pca_harmony")
     except ImportError:
