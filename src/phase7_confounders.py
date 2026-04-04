@@ -114,6 +114,7 @@ def regress_cell_cycle(adata, logger):
 def correct_batch_harmony(adata, batch_key: str, logger):
     """Run Harmony integration on PCA space."""
     import scipy.sparse as sp
+    import numpy as np
     from sklearn.preprocessing import StandardScaler
 
     logger.info(f"  Running Harmony batch correction (key='{batch_key}') ...")
@@ -136,13 +137,26 @@ def correct_batch_harmony(adata, batch_key: str, logger):
 
     try:
         import harmonypy
-        # FIX: harmonypy will crash with a KeyError if the batch column is numeric.
-        # We explicitly cast the batch key to a categorical string to satisfy its internal pandas logic.
-        if adata.obs[batch_key].dtype.name not in ['category', 'object', 'string']:
-            logger.info(f"  Casting '{batch_key}' to categorical to satisfy harmonypy constraints...")
-            adata.obs[batch_key] = adata.obs[batch_key].astype(str).astype('category')
+        logger.info(f"  Casting '{batch_key}' to categorical to satisfy harmonypy constraints...")
+        adata.obs[batch_key] = adata.obs[batch_key].astype(str).astype('category')
+        
+        # ── BYPASS SCANPY WRAPPER ──────────────────────────────────────────────
+        X_pca = adata.obsm['X_pca'].astype(np.float32)
+        harmony_out = harmonypy.run_harmony(X_pca, adata.obs, batch_key)
+        
+        # Dynamic shape assignment (protects against version changes & PyTorch tensors)
+        Z = harmony_out.Z_corr
+        if hasattr(Z, 'numpy'):
+            Z = Z.cpu().numpy()
             
-        sc.external.pp.harmony_integrate(adata, key=batch_key)
+        if Z.shape[0] == adata.n_obs:
+            adata.obsm['X_pca_harmony'] = Z
+        elif Z.shape[1] == adata.n_obs:
+            adata.obsm['X_pca_harmony'] = Z.T
+        else:
+            raise ValueError(f"Harmony returned invalid shape: {Z.shape}")
+        # ───────────────────────────────────────────────────────────────────────
+            
         logger.info(f"  Harmony integration complete → X_pca_harmony")
     except ImportError:
         logger.warning("  ⚠ harmonypy not installed — skipping batch correction")
