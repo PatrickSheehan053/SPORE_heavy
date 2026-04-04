@@ -89,13 +89,20 @@ def _get_perturbation_targets(adata, cfg: dict) -> set:
     return targets & set(adata.var_names)
 
 
+def _get_cell_cycle_genes():
+    """Tirosh et al. 2016 S-phase and G2M-phase gene lists for ghosting."""
+    s_genes = ["MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8"]
+    g2m_genes = ["HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA"]
+    return s_genes + g2m_genes
+
+
 def select_hvg(train_adata, cfg: dict, logger):
     log_phase_header(logger, 5, "Dimensionality Reduction (HVG)")
     p5 = cfg["phase5_hvg"]
 
     if not p5["enabled"]:
         logger.info("  Phase 5 SKIPPED (disabled in config)")
-        return list(train_adata.var_names), []
+        return list(train_adata.var_names), list(train_adata.var_names), []
 
     n_top = p5["n_top_genes"]
     method = p5["method"]
@@ -103,8 +110,6 @@ def select_hvg(train_adata, cfg: dict, logger):
     logger.info(f"  HVG method: {method} | Target: {n_top:,} genes")
     
     # ── Memory-Safe HVG Subsampling ──────────────────────────────────────────
-    # Calculating LOESS variance across 1.5M cells triggers an X**2 duplication OOM.
-    # We sample 100k cells to calculate the rankings, which is mathematically robust.
     MAX_HVG_CELLS = 100_000
     if train_adata.n_obs > MAX_HVG_CELLS:
         logger.info(f"  Downsampling to {MAX_HVG_CELLS:,} cells to calculate variance safely...")
@@ -120,8 +125,6 @@ def select_hvg(train_adata, cfg: dict, logger):
     hvg_genes = set(calc_adata.var_names[hvg_mask])
     logger.info(f"  Seurat v3 selected: {len(hvg_genes):,} HVGs")
 
-    # ADD THESE TWO LINES: Save the full variance stats before we delete the matrix
-    # Safely grab whichever dispersion/variance columns Scanpy generated based on the flavor
     var_cols = [c for c in calc_adata.var.columns if c in ['means', 'dispersions_norm', 'variances_norm', 'highly_variable']]
     hvg_stats = calc_adata.var[var_cols].copy()
     train_adata.uns['hvg_stats'] = hvg_stats
@@ -146,27 +149,39 @@ def select_hvg(train_adata, cfg: dict, logger):
         else:
             logger.info(f"  Target rescue: all targets already in HVG set")
 
-    ordered_hvgs = [g for g in train_adata.var_names if g in hvg_genes]
-    logger.info(f"  Final feature set: {len(ordered_hvgs):,} genes")
+    core_features = sorted([g for g in train_adata.var_names if g in hvg_genes])
+    logger.info(f"  Core feature set: {len(core_features):,} genes")
 
-    return ordered_hvgs, rescued
+    # ── Cell Cycle Ghosting ──────────────────────────────────────────────────
+    cc_genes = _get_cell_cycle_genes()
+    var_upper_map = {v.upper(): v for v in train_adata.var_names}
+    cc_present = [var_upper_map[g] for g in cc_genes if g in var_upper_map]
+    
+    ghost_genes = sorted(list(set(cc_present) - set(core_features)))
+    extended_features = core_features + ghost_genes
+    logger.info(f"  Ghosting {len(ghost_genes)} cell cycle genes to preserve Phase 7 regression...")
+
+    return extended_features, core_features, rescued
 
 
-def apply_hvg_mask(adata, hvg_genes: list, label: str, logger):
-    hvg_set = set(hvg_genes)
-    gene_mask = np.array([g in hvg_set for g in adata.var_names])
+def apply_hvg_mask(adata, extended_genes: list, core_genes: list, label: str, logger):
+    extended_set = set(extended_genes)
+    gene_mask = np.array([g in extended_set for g in adata.var_names])
     n_valid = gene_mask.sum()
-    logger.info(f"  [{label}] Applying HVG mask: {n_valid:,}/{adata.n_vars:,} genes")
+    logger.info(f"  [{label}] Applying HVG + Ghost mask: {n_valid:,}/{adata.n_vars:,} genes")
 
     adata_new = safe_in_memory_gene_subset(adata, keep_mask=gene_mask, logger=logger)
+    
+    # Save the true target list in the metadata so Phase 7 knows what to delete later
+    adata_new.uns["spore_core_features"] = core_genes
     return adata_new
 
 
 def run_phase5(splits: dict, cfg: dict, logger):
-    hvg_genes, rescued = select_hvg(splits["train"], cfg, logger)
+    extended_genes, core_genes, rescued = select_hvg(splits["train"], cfg, logger)
 
     log_memory(logger, "before HVG masking")
     for key in ["train", "val", "test"]:
-        splits[key] = apply_hvg_mask(splits[key], hvg_genes, key.title(), logger)
+        splits[key] = apply_hvg_mask(splits[key], extended_genes, core_genes, key.title(), logger)
 
-    return hvg_genes, rescued
+    return core_genes, rescued
