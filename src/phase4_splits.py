@@ -265,12 +265,15 @@ def split_cell_wise(adata, cfg: dict, logger, seed: int = None):
 
 def save_splits(split_result: dict, cfg: dict, logger, seed: int = None):
     splits_dir = cfg["paths"]["_splits"]
+    dataset_name = cfg["dataset"]["name"]
+    
     if seed is not None:
         splits_dir = splits_dir / f"seed_{seed}"
     splits_dir.mkdir(parents=True, exist_ok=True)
 
     for key in ["train", "val", "test"]:
-        path = splits_dir / f"{key}.h5ad"
+        # ── THE FIX: Inject dataset_name into the split filename ──
+        path = splits_dir / f"{dataset_name}_{key}.h5ad"
         split_result[key].write_h5ad(path)
         logger.info(f"  Saved {key} → {path}")
 
@@ -281,7 +284,8 @@ def save_splits(split_result: dict, cfg: dict, logger, seed: int = None):
             "test_labels": list(split_result["test_labels"]),
             "seed": int(split_result["seed"]),
         }
-        meta_path = splits_dir / "split_indices.json"
+        # ── THE FIX: Inject dataset_name into the JSON metadata filename ──
+        meta_path = splits_dir / f"{dataset_name}_split_indices.json"
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
