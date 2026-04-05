@@ -6,7 +6,7 @@
 # ── Paths ───────────────────────────────────────────────────────────────────
 paths:
   project_root: "/scratch/patrick.sheehan/MYCELIUM/SPORE"
-  raw_h5ad: "raw_h5ads/K562_gwps_raw_singlecell_01_sparse.h5ad"
+  raw_h5ad: "raw_h5ads/K562_gwps_raw_singlecell_01.h5ad"
   processed_dir: "processed"
   splits_dir: "splits"
   figures_dir: "figures"
@@ -28,6 +28,10 @@ runtime:
   n_jobs: 8                          # parallel workers (you have 16 CPUs; 8 is safe)
   sparse_on_load: true               # force CSR conversion immediately after loading
   memory_monitor: true               # log RAM usage at each phase boundary
+
+# ── Phase 0 · Data Ingestion & Sparsification ───────────────────────────────
+phase0_ingestion:
+  chunk_size: 50000
 
 # ── Phase 1 · Cell-Level Triage ─────────────────────────────────────────────
 phase1_cell_triage:
@@ -112,6 +116,12 @@ phase7_confounders:
 
   imputation_prohibited: true
   fit_on_train_only: true
+
+# ── Phase 8 · Meta-Cell Aggregation ────────────────────────────────────────
+phase8_metacells:
+  enabled: true
+  target_cells_per_metacell: 10       # Number of single cells to pool per metacell
+  systema_calibration: true           # Calculate C_ctrl and O_pert for PySR
 
 # ── Plotting ────────────────────────────────────────────────────────────────
 plotting:
