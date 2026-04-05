@@ -5,8 +5,8 @@
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 paths:
-  project_root: "/scratch/patrick.sheehan/MYCELIUM/SPORE"
-  raw_h5ad: "raw_h5ads/K562_gwps_raw_singlecell_01.h5ad"
+  project_root:                      # point to your project directory
+  raw_h5ad:                          # point to your scRNA-seq .h5ad file
   processed_dir: "processed"
   splits_dir: "splits"
   figures_dir: "figures"
@@ -15,7 +15,7 @@ paths:
 
 # ── Dataset Metadata ────────────────────────────────────────────────────────
 dataset:
-  name: "Replogle_2022_K562_GWPS"
+  name:                              # Name of your data set
   organism: "human"                  # human | mouse  (controls MT-/mt- prefix)
   cell_line: "K562"
   perturbation_type: "CRISPRi"
@@ -31,7 +31,7 @@ runtime:
 
 # ── Phase 0 · Data Ingestion & Sparsification ───────────────────────────────
 phase0_ingestion:
-  chunk_size: 50000
+  chunk_size: 50000                  # adjust as needed to your ram limits
 
 # ── Phase 1 · Cell-Level Triage ─────────────────────────────────────────────
 phase1_cell_triage:
